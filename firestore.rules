@@ -1,0 +1,147 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // Email/password users must tap the verification link before using data.
+    function verified() {
+      return request.auth.token.email_verified == true
+          || request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+
+    function userDoc(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    // The signed-in user is the linked partner of {uid}.
+    function isPartner(uid) {
+      return signedIn() && verified()
+          && get(userDoc(uid)).data.get('partnerId', null) == request.auth.uid;
+    }
+
+    function validAmount() {
+      return request.resource.data.amount is number
+          && request.resource.data.amount > 0
+          && request.resource.data.amount < 1000000000000
+          && request.resource.data.date is timestamp;
+    }
+
+    function changes(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(keys);
+    }
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    match /users/{uid} {
+      // Owner: full access. Partner: read the profile (name, photo).
+      allow read: if isOwner(uid) || isPartner(uid);
+      allow create: if isOwner(uid) && request.resource.data.get('partnerId', null) == null;
+      // Can't delete the profile while linked (that would be a one-sided disconnect).
+      allow delete: if isOwner(uid) && resource.data.get('partnerId', null) == null;
+
+      allow update: if
+        (isOwner(uid) && (
+           // Normal profile edits (name, phone, disconnect request…).
+           !changes(['partnerId', 'partnerSince'])
+           // CONNECT (own side): the other person points back at me after this write.
+           || (resource.data.get('partnerId', null) == null
+               && request.resource.data.partnerId is string
+               && getAfter(userDoc(request.resource.data.partnerId)).data.get('partnerId', null) == uid)
+           // DISCONNECT (own side): only after the partner asked for it
+           // (both must agree), or when the partner is already gone.
+           || (resource.data.get('partnerId', null) != null
+               && request.resource.data.get('partnerId', null) == null
+               && (get(userDoc(resource.data.partnerId)).data.get('disconnectRequestedAt', null) != null
+                   || get(userDoc(resource.data.partnerId)).data.get('partnerId', null) != uid))
+        ))
+        // CONNECT: another user links themselves to {uid}, in the same
+        // transaction that links their own doc to {uid}. Only allowed while
+        // {uid} is single and through {uid}'s current partner code.
+        || (signedIn() && verified()
+            && request.auth.uid != uid
+            && resource.data.get('partnerId', null) == null
+            && request.resource.data.partnerId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['partnerId', 'partnerSince', 'partnerCode'])
+            && resource.data.get('partnerCode', null) != null
+            && get(/databases/$(database)/documents/partnerCodes/$(resource.data.partnerCode)).data.uid == uid
+            && getAfter(userDoc(request.auth.uid)).data.partnerId == uid)
+        // CONFIRM DISCONNECT: {uid} asked to disconnect, the partner agrees
+        // and clears the link (in the same batch as their own doc).
+        || (signedIn()
+            && request.auth.uid != uid
+            && resource.data.get('partnerId', null) == request.auth.uid
+            && resource.data.get('disconnectRequestedAt', null) != null
+            && request.resource.data.get('partnerId', null) == null
+            && onlyChanges(['partnerId', 'partnerSince', 'disconnectRequestedAt']))
+        // DECLINE: the partner says "stay connected" and clears the request.
+        || (signedIn()
+            && request.auth.uid != uid
+            && resource.data.get('partnerId', null) == request.auth.uid
+            && request.resource.data.get('disconnectRequestedAt', null) == null
+            && onlyChanges(['disconnectRequestedAt']));
+
+      // Owner or linked partner: same full access (add, edit, delete).
+      function canManage() { return (isOwner(uid) && verified()) || isPartner(uid); }
+
+      match /expenses/{id} {
+        allow read, delete: if canManage();
+        allow create, update: if canManage() && validAmount()
+          && request.resource.data.category is string
+          && request.resource.data.payment is string;
+      }
+
+      match /salaries/{id} {
+        allow read, delete: if canManage();
+        allow create, update: if canManage() && validAmount();
+      }
+
+      match /months/{month} {
+        allow read, write: if canManage();
+      }
+
+      // Live GPS: only the owner writes their own position; only the owner
+      // and the linked partner can read it.
+      match /live/{doc} {
+        allow read: if isOwner(uid) || isPartner(uid);
+        allow delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && verified() && doc == 'location'
+          && request.resource.data.lat is number
+          && request.resource.data.lng is number
+          && request.resource.data.lat >= -90 && request.resource.data.lat <= 90
+          && request.resource.data.lng >= -180 && request.resource.data.lng <= 180;
+      }
+
+      // Partner activity feed: the partner writes, the owner reads.
+      match /inbox/{id} {
+        allow read, delete: if isOwner(uid);
+        allow update: if isOwner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notified']);
+        allow create: if isPartner(uid)
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.type in ['expense', 'connected', 'alert',
+               'disconnect_request', 'disconnect_cancel', 'disconnect_declined',
+               // live-GPS alerts detected on the partner's phone
+               'driving_start', 'driving_stop', 'left_place', 'arrived_place',
+               'charging', 'battery_full', 'battery_low']
+          && request.resource.data.notified == false;
+      }
+    }
+
+    // Partner code lookup: anyone signed in may look up ONE code (get) but
+    // never list them. Each user owns their code.
+    match /partnerCodes/{code} {
+      allow get: if signedIn() && verified();
+      allow list: if false;
+      allow create: if signedIn() && verified()
+        && request.resource.data.uid == request.auth.uid
+        && code.size() == 6;
+      allow delete: if signedIn() && (
+        resource.data.uid == request.auth.uid
+        || getAfter(userDoc(resource.data.uid)).data.get('partnerId', null) == request.auth.uid);
+    }
+  }
+}

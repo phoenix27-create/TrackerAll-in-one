@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "650194159926",
+    "project_id": "trackerapp-6bac1",
+    "storage_bucket": "trackerapp-6bac1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:650194159926:android:4ab9d1baeda1a97d090b97",
+        "android_client_info": {
+          "package_name": "com.lifetrack.life_tracker"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "650194159926-o2jrau95ulf99kkfgee30glefqdhhgg4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lifetrack.life_tracker",
+            "certificate_hash": "d8c4c8b9d13a178e19d5a373305ec9e1be0128f2"
+          }
+        },
+        {
+          "client_id": "650194159926-oklg4043a21k6mn350jouvm4n1v6bo3b.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAnWVv7tM6WQdzheb8sEogv0V2Ho4cltzs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "650194159926-oklg4043a21k6mn350jouvm4n1v6bo3b.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "650194159926-m93vi2b4ul8aqcpdb1pri5f03rqvafpn.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.lifetrack.lifeTracker"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

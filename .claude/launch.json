@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "lifetrack-web",
+      "runtimeExecutable": "C:\\Users\\phyominthet\\flutter\\bin\\flutter.bat",
+      "runtimeArgs": ["run", "-d", "web-server", "--web-hostname", "localhost", "--web-port", "8080"],
+      "port": 8080
+    }
+  ]
+}
