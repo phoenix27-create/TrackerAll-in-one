@@ -8,7 +8,7 @@ import 'core/theme.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/verify_email_screen.dart';
 import 'features/home/home_screen.dart';
-import 'features/location/location_gate.dart';
+import 'features/permissions/permissions_flow.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'services/notification_service.dart';
@@ -79,7 +79,7 @@ class AuthGate extends StatelessWidget {
           return VerifyEmailScreen(email: user.email ?? '');
         }
         // Location must be allowed before using the app (Partner GPS).
-        return LocationGate(
+        return PermissionsFlow(
           child: HomeScreen(key: ValueKey(user.uid), user: user),
         );
       },

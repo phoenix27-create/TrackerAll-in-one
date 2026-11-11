@@ -6,13 +6,14 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
 import 'activity_detector.dart';
+import 'browser_location.dart';
 import 'partner_service.dart';
 
 enum LocationAccess { granted, denied, deniedForever, serviceOff }
 
 /// Live GPS for the Partner Location tracker (free Spark plan friendly).
 ///
-/// * Every user must allow location ([LocationGate] asks on first use).
+/// * Every user must allow location (PermissionsFlow asks on first use).
 /// * While linked with a partner, the position is written to
 ///   users/{uid}/live/location – at most every 20 s, or sooner after moving
 ///   30 m – so the partner sees it live on the map.
@@ -41,12 +42,14 @@ class LocationService {
     if (!await Geolocator.isLocationServiceEnabled()) {
       return LocationAccess.serviceOff;
     }
+    if (kIsWeb) {
+      // Always the real request on the web: it shows the browser prompt when
+      // allowed, and only a real "Don't Allow" counts as blocked.
+      final ok = await requestBrowserLocation();
+      return ok == true ? LocationAccess.granted : LocationAccess.deniedForever;
+    }
     var p = await Geolocator.checkPermission();
-    // Browsers can't report "ask again" reliably (Safari remembers a "Don't
-    // Allow" only for a while), so on the web always try the real request –
-    // it shows the prompt when the browser allows one, or fails fast.
-    if (kIsWeb ||
-        p == LocationPermission.denied ||
+    if (p == LocationPermission.denied ||
         p == LocationPermission.unableToDetermine) {
       p = await Geolocator.requestPermission();
     }

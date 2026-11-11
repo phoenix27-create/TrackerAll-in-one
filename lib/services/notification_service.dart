@@ -5,7 +5,13 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
-/// Local device notifications (Android + iOS) for budget alerts.
+import 'web_notify.dart';
+
+/// Notification permission state (phone apps and browsers).
+enum NotifyAccess { granted, denied, notDetermined, unsupported }
+
+/// Device notifications: Android + iOS (flutter_local_notifications) and the
+/// web (browser notifications, incl. iPhone home-screen apps).
 class NotificationService {
   NotificationService._();
   static final instance = NotificationService._();
@@ -40,7 +46,10 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
-    if (kIsWeb) return;
+    if (kIsWeb) {
+      await webNotifyShow(title, body, tag: 'partner-$id');
+      return;
+    }
     try {
       await init();
       await _plugin.show(
@@ -155,28 +164,80 @@ class NotificationService {
     _ready = true;
   }
 
-  /// Ask the OS for permission (Android 13+, iOS). Call after login.
-  Future<void> requestPermission() async {
-    if (kIsWeb) return;
-    await init();
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.requestNotificationsPermission();
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >()
-        ?.requestPermissions(alert: true, badge: true, sound: true);
+  /// Current permission, without asking.
+  Future<NotifyAccess> status() async {
+    if (kIsWeb) return _fromWeb(webNotifyStatus());
+    try {
+      await init();
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      if (android != null) {
+        final on = await android.areNotificationsEnabled();
+        return on == true ? NotifyAccess.granted : NotifyAccess.notDetermined;
+      }
+      final ios = _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >();
+      if (ios != null) {
+        final p = await ios.checkPermissions();
+        return p?.isEnabled == true
+            ? NotifyAccess.granted
+            : NotifyAccess.notDetermined;
+      }
+    } catch (e) {
+      debugPrint('Notification status: $e');
+    }
+    return NotifyAccess.notDetermined;
   }
+
+  /// Shows the system "Allow notifications?" prompt (call from a tap).
+  Future<NotifyAccess> request() async {
+    if (kIsWeb) return _fromWeb(await webNotifyRequest());
+    try {
+      await init();
+      bool? ok = await _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestNotificationsPermission();
+      ok ??= await _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+      return ok == true ? NotifyAccess.granted : NotifyAccess.denied;
+    } catch (e) {
+      debugPrint('Notification request: $e');
+      return NotifyAccess.denied;
+    }
+  }
+
+  /// Kept for older call sites.
+  Future<void> requestPermission() async => request();
+
+  static NotifyAccess _fromWeb(String s) => switch (s) {
+    'granted' => NotifyAccess.granted,
+    'denied' => NotifyAccess.denied,
+    'default' => NotifyAccess.notDetermined,
+    _ => NotifyAccess.unsupported,
+  };
 
   Future<void> show({
     required String title,
     required String body,
     bool urgent = false,
   }) async {
-    if (kIsWeb) return;
+    if (kIsWeb) {
+      await webNotifyShow(
+        title,
+        body,
+        tag: urgent ? 'budget-urgent' : 'budget',
+      );
+      return;
+    }
     try {
       await init();
       await _plugin.show(

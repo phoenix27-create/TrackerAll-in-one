@@ -335,7 +335,8 @@ class PartnerService {
   /// Runs while the app is open or in the background; anything that arrived
   /// while it was closed is shown the next time the app opens.
   void listenInbox(String uid) {
-    if (kIsWeb || _inboxUid == uid) return;
+    // Web too: browser notifications (when allowed).
+    if (_inboxUid == uid) return;
     _inboxSub?.cancel();
     _inboxUid = uid;
     _inboxSub = _user(uid)

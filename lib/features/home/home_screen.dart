@@ -7,7 +7,6 @@ import '../../core/theme.dart';
 import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
 import '../location/partner_map_screen.dart';
-import '../../services/notification_service.dart';
 import '../../services/partner_service.dart';
 import '../../services/reminder_service.dart';
 import '../expense/expense_shell.dart';
@@ -49,9 +48,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    NotificationService.instance.requestPermission().then(
-      (_) => ReminderService.instance.sync(widget.user.uid),
-    );
+    // Permissions were asked on the onboarding screens (PermissionsFlow).
+    ReminderService.instance.sync(widget.user.uid);
     PartnerService.instance.ensureCode(widget.user.uid);
     PartnerService.instance.listenInbox(widget.user.uid);
     // Share live GPS while linked with a partner; stop when not.
