@@ -1,0 +1,33 @@
+# Netlify builds the Flutter web app on every push to GitHub.
+# Netlify has no Flutter preinstalled, so the build downloads the same
+# version used locally (3.47.9), builds, and publishes ONLY build/web
+# (the source code is not served).
+[build]
+  command = """
+    if [ ! -d "$HOME/flutter" ]; then
+      git clone https://github.com/flutter/flutter.git --branch 3.47.9 --depth 1 "$HOME/flutter"
+    fi
+    export PATH="$HOME/flutter/bin:$PATH"
+    flutter config --no-analytics
+    flutter --version
+    flutter pub get
+    flutter build web --release
+  """
+  publish = "build/web"
+
+# Single-page app: any unknown path loads the app.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Always fetch the newest app shell; cache the big hashed assets.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/flutter_service_worker.js"
+  [headers.values]
+    Cache-Control = "no-cache"
