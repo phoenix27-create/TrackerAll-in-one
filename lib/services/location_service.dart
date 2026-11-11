@@ -42,7 +42,11 @@ class LocationService {
       return LocationAccess.serviceOff;
     }
     var p = await Geolocator.checkPermission();
-    if (p == LocationPermission.denied ||
+    // Browsers can't report "ask again" reliably (Safari remembers a "Don't
+    // Allow" only for a while), so on the web always try the real request –
+    // it shows the prompt when the browser allows one, or fails fast.
+    if (kIsWeb ||
+        p == LocationPermission.denied ||
         p == LocationPermission.unableToDetermine) {
       p = await Geolocator.requestPermission();
     }
