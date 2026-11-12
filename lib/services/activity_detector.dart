@@ -87,6 +87,12 @@ class ActivityDetector {
   List<SavedPlace> places = const [];
 
   bool driving = false;
+
+  /// What the person is doing right now, from recent speeds:
+  /// 'still' | 'walking' | 'running' (running or cycling) | 'driving'.
+  String activity = 'still';
+  final _speeds = <(DateTime, double)>[];
+
   int _fastFixes = 0;
   DateTime? _lastFastAt;
   double? _lastLat, _lastLng;
@@ -124,6 +130,11 @@ class ActivityDetector {
     _lastLng = lng;
     _lastAt = at;
 
+    // Recent speeds (last 90 s); a median ignores single GPS jumps.
+    // Very inaccurate fixes don't count (indoor jitter looks like walking).
+    if (accuracy <= 50 || speed > 0) _speeds.add((at, v));
+    _speeds.removeWhere((s) => at.difference(s.$1) > const Duration(seconds: 90));
+
     // ---- driving ---------------------------------------------------------
     if (!driving) {
       _fastFixes = v >= driveStartSpeed ? _fastFixes + 1 : 0;
@@ -141,6 +152,8 @@ class ActivityDetector {
         _emit(out, const ActivityEvent(AlertType.drivingStop), at);
       }
     }
+
+    activity = classify(driving: driving, speeds: [for (final s in _speeds) s.$2]);
 
     // ---- places ----------------------------------------------------------
     if (accuracy <= _maxAccuracy) {
@@ -194,6 +207,18 @@ class ActivityDetector {
     if (last != null && at.difference(last) < _cooldown) return;
     _lastEmit[key] = at;
     out.add(e);
+  }
+
+  /// Activity from recent speeds (m/s). Driving wins once it is confirmed.
+  static String classify({required bool driving, required List<double> speeds}) {
+    if (driving) return 'driving';
+    if (speeds.isEmpty) return 'still';
+    final sorted = [...speeds]..sort();
+    final median = sorted[sorted.length ~/ 2];
+    if (median < 0.6) return 'still'; // < ~2 km/h
+    if (median < 2.5) return 'walking'; // < ~9 km/h
+    if (median < driveStartSpeed) return 'running'; // running / cycling
+    return 'driving';
   }
 
   /// Great-circle distance in metres.

@@ -85,6 +85,7 @@ class LocationService {
   String? _uid;
   Position? _lastSent;
   DateTime? _lastSentAt;
+  String? _lastActivity;
 
   static const _minInterval = Duration(seconds: 20);
   static const _moveMeters = 30.0;
@@ -239,10 +240,8 @@ class LocationService {
     );
     _send(events);
     // Upload straight away when driving starts/stops so the map chip is right.
-    final drivingChanged = events.any(
-      (e) =>
-          e.type == AlertType.drivingStart || e.type == AlertType.drivingStop,
-    );
+    // Upload straight away when the activity changes (e.g. starts walking).
+    final drivingChanged = _detector.activity != _lastActivity;
     final last = _lastSent, lastAt = _lastSentAt;
     if (last != null && lastAt != null) {
       final elapsed = now.difference(lastAt);
@@ -260,6 +259,7 @@ class LocationService {
     }
     _lastSent = p;
     _lastSentAt = now;
+    _lastActivity = _detector.activity;
     _db
         .collection('users')
         .doc(uid)
@@ -272,8 +272,12 @@ class LocationService {
           'speed': p.speed,
           'heading': p.heading,
           'updatedAt': FieldValue.serverTimestamp(),
-          'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
+          // e.g. 'web-iOS' (iPhone Home Screen app), 'android', 'web-windows'
+          'platform': kIsWeb
+              ? 'web-${defaultTargetPlatform.name}'
+              : defaultTargetPlatform.name,
           'driving': _detector.driving,
+          'activity': _detector.activity,
           'battery': ?_batteryLevel,
           'charging': _charging,
         })
@@ -361,12 +365,23 @@ class SharedLocation {
     this.battery,
     this.charging = false,
     this.driving = false,
+    this.activity,
+    this.platform = '',
   });
 
   final double lat, lng, accuracy, speed;
   final DateTime? updatedAt;
   final int? battery;
   final bool charging, driving;
+
+  /// 'still' | 'walking' | 'running' | 'driving' (null = older app version).
+  final String? activity;
+
+  /// e.g. 'web-iOS', 'android', 'web-windows'.
+  final String platform;
+
+  /// iPhone/iPad web app: Safari never shares battery with websites.
+  bool get isIosWeb => platform == 'web-iOS';
 
   static SharedLocation? fromDoc(DocumentSnapshot<Map<String, dynamic>> d) {
     final m = d.data();
@@ -380,6 +395,8 @@ class SharedLocation {
       battery: (m['battery'] as num?)?.round(),
       charging: m['charging'] == true,
       driving: m['driving'] == true,
+      activity: m['activity'] as String?,
+      platform: m['platform'] as String? ?? '',
     );
   }
 

@@ -638,11 +638,11 @@ class _InfoCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (l != null && l.driving)
-                  _Chip(
-                    icon: Icons.directions_car_rounded,
-                    text: 'Driving',
-                    color: _blue,
+                // What the partner is doing (only while their app is live;
+                // otherwise it would be an old, misleading state).
+                if (l != null && isLive)
+                  _activityChip(
+                    l.driving ? 'driving' : (l.activity ?? 'still'),
                   ),
                 if (atPlace != null)
                   _Chip(
@@ -661,6 +661,12 @@ class _InfoCard extends StatelessWidget {
                     color: l.charging
                         ? _live
                         : (l.battery! <= 15 ? AppColors.red : null),
+                  )
+                else if (l != null && l.isIosWeb)
+                  // Safari never gives battery info to websites.
+                  const _Chip(
+                    icon: Icons.battery_unknown_rounded,
+                    text: 'Battery hidden by iPhone',
                   ),
                 if (distance != null)
                   _Chip(icon: Icons.straighten_rounded, text: distance),
@@ -904,6 +910,26 @@ class _DirectionsCard extends StatelessWidget {
     );
   }
 }
+
+/// Activity chip: still / walking / running-or-cycling / driving.
+Widget _activityChip(String activity) => switch (activity) {
+  'driving' => const _Chip(
+    icon: Icons.directions_car_rounded,
+    text: 'Driving',
+    color: _blue,
+  ),
+  'running' => const _Chip(
+    icon: Icons.directions_bike_rounded,
+    text: 'Running / cycling',
+    color: Color(0xFF8E44AD),
+  ),
+  'walking' => const _Chip(
+    icon: Icons.directions_walk_rounded,
+    text: 'Walking',
+    color: Color(0xFF16A34A),
+  ),
+  _ => const _Chip(icon: Icons.accessibility_new_rounded, text: 'Not moving'),
+};
 
 IconData _batteryIcon(int level) => level <= 15
     ? Icons.battery_alert_rounded
