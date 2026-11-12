@@ -30,6 +30,11 @@ class LocationService {
 
   // ---------------------------------------------------------- permission --
 
+  /// Web: the user tapped Allow and the browser agreed. iPhone Safari's
+  /// Permissions API keeps answering "prompt" even after that, so this flag
+  /// (not the API) decides whether sharing may start.
+  bool _webAllowed = false;
+
   Future<LocationAccess> status() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
       return LocationAccess.serviceOff;
@@ -46,6 +51,7 @@ class LocationService {
       // Always the real request on the web: it shows the browser prompt when
       // allowed, and only a real "Don't Allow" counts as blocked.
       final ok = await requestBrowserLocation();
+      if (ok == true) _webAllowed = true;
       return ok == true ? LocationAccess.granted : LocationAccess.deniedForever;
     }
     var p = await Geolocator.checkPermission();
@@ -110,35 +116,64 @@ class LocationService {
     }
     if (_uid == uid && _sub != null) return;
     await stop();
-    if (await status() != LocationAccess.granted) return;
+    if (kIsWeb) {
+      // Only a real block stops sharing on the web (see [_webAllowed]).
+      if (!_webAllowed && await status() == LocationAccess.deniedForever) {
+        return;
+      }
+    } else if (await status() != LocationAccess.granted) {
+      return;
+    }
     _uid = uid;
     _startBattery();
     _sub = Geolocator.getPositionStream(locationSettings: _settings())
         .listen(_onPosition, onError: (e) => debugPrint('Location stream: $e'));
     // Send a first fix straight away instead of waiting for movement.
-    try {
-      _onPosition(
-        await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-          ),
-        ),
-      );
-    } catch (e) {
-      debugPrint('First fix failed: $e');
-    }
+    final first = await _quickFix();
+    if (first != null) _onPosition(first);
   }
 
   /// One-off position for the map when not sharing (e.g. no partner yet).
   Future<void> refreshMine() async {
+    final p = await _quickFix();
+    if (p != null) myPosition.value = p;
+  }
+
+  /// A position without hanging: precise GPS for up to 20 s, then a quick
+  /// network-based fix (phones indoors can take very long for precise GPS).
+  Future<Position?> _quickFix() async {
     try {
-      myPosition.value = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
+      return await Geolocator.getCurrentPosition(
+        locationSettings: kIsWeb
+            ? WebSettings(
+                accuracy: LocationAccuracy.high,
+                timeLimit: const Duration(seconds: 20),
+                maximumAge: const Duration(seconds: 30),
+              )
+            : const LocationSettings(
+                accuracy: LocationAccuracy.high,
+                timeLimit: Duration(seconds: 20),
+              ),
       );
     } catch (e) {
-      debugPrint('Current position failed: $e');
+      debugPrint('Precise fix failed: $e');
+    }
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: kIsWeb
+            ? WebSettings(
+                accuracy: LocationAccuracy.low,
+                timeLimit: const Duration(seconds: 15),
+                maximumAge: const Duration(minutes: 10),
+              )
+            : const LocationSettings(
+                accuracy: LocationAccuracy.low,
+                timeLimit: Duration(seconds: 15),
+              ),
+      );
+    } catch (e) {
+      debugPrint('Quick fix failed: $e');
+      return null;
     }
   }
 
