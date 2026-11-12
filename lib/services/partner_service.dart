@@ -8,6 +8,7 @@ import '../core/format.dart';
 import '../features/expense/models.dart';
 import 'activity_detector.dart';
 import 'notification_service.dart';
+import 'push_service.dart';
 
 /// Partner sharing (works on the free Spark plan – no Cloud Functions).
 ///
@@ -321,12 +322,26 @@ class PartnerService {
     return key == null || alertPrefs[key] != false;
   }
 
-  Future<void> _sendInbox(String toUid, Map<String, dynamic> data) =>
-      _user(toUid).collection('inbox').add({
-        ...data,
-        'createdAt': FieldValue.serverTimestamp(),
-        'notified': false,
-      });
+  /// Saves the activity in the receiver's inbox (shown by their open app)
+  /// and pushes it to their devices, so it also arrives when the app is
+  /// closed (web push, see [PushService]).
+  Future<void> _sendInbox(String toUid, Map<String, dynamic> data) async {
+    final ref = await _user(toUid).collection('inbox').add({
+      ...data,
+      'createdAt': FieldValue.serverTimestamp(),
+      'notified': false,
+    });
+    final a = PartnerActivity.fromMap(data);
+    unawaited(
+      PushService.instance.send(
+        to: toUid,
+        type: a.type,
+        title: a.title,
+        body: a.body,
+        inboxId: ref.id,
+      ),
+    );
+  }
 
   StreamSubscription? _inboxSub;
   String? _inboxUid;
@@ -343,20 +358,52 @@ class PartnerService {
         .collection('inbox')
         .where('notified', isEqualTo: false)
         .snapshots()
-        .listen((snap) async {
+        .listen((snap) {
           for (final d in snap.docs) {
-            final a = PartnerActivity.fromDoc(d);
-            // Alerts the user switched off are marked as seen silently.
-            if (_wanted(a.type)) {
-              await NotificationService.instance.showPartner(
-                id: 3000 + (d.id.hashCode & 0xFFFF),
-                title: a.title,
-                body: a.body,
-              );
-            }
-            await d.reference.update({'notified': true});
+            if (_handling.add(d.id)) unawaited(_handleInbox(d));
           }
         }, onError: (e) => debugPrint('Inbox listener: $e'));
+  }
+
+  /// Inbox items currently being shown (a snapshot can repeat them).
+  final _handling = <String>{};
+
+  Future<void> _handleInbox(
+    QueryDocumentSnapshot<Map<String, dynamic>> d,
+  ) async {
+    try {
+      final a = PartnerActivity.fromDoc(d);
+      // Alerts the user switched off are marked as seen silently.
+      if (_wanted(a.type) && !await _alreadyPushed(d)) {
+        await NotificationService.instance.showPartner(
+          id: 3000 + (d.id.hashCode & 0xFFFF),
+          title: a.title,
+          body: a.body,
+        );
+      }
+      await d.reference.update({'notified': true});
+    } catch (e) {
+      debugPrint('Inbox item: $e');
+    } finally {
+      _handling.remove(d.id);
+    }
+  }
+
+  /// When this device gets web pushes, the server's push already showed the
+  /// notification – don't show it twice. Gives the push a few seconds to
+  /// arrive; if it didn't go out, the app shows it itself.
+  Future<bool> _alreadyPushed(
+    QueryDocumentSnapshot<Map<String, dynamic>> d,
+  ) async {
+    if (!PushService.instance.active) return false;
+    if (d.data()['pushed'] == true) return true;
+    await Future<void>.delayed(const Duration(seconds: 6));
+    try {
+      final fresh = await d.reference.get();
+      return fresh.data()?['pushed'] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   void stopInbox() {
@@ -404,14 +451,18 @@ class PartnerActivity {
   final String? place;
   final int? battery;
 
-  factory PartnerActivity.fromDoc(DocumentSnapshot<Map<String, dynamic>> d) {
-    final m = d.data() ?? {};
+  factory PartnerActivity.fromDoc(DocumentSnapshot<Map<String, dynamic>> d) =>
+      PartnerActivity.fromMap(d.data() ?? {});
+
+  factory PartnerActivity.fromMap(Map<String, dynamic> m) {
     return PartnerActivity(
       type: m['type'] as String? ?? 'expense',
       fromName: (m['fromName'] as String?)?.trim().isNotEmpty == true
           ? m['fromName'] as String
           : 'Your partner',
-      createdAt: (m['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: m['createdAt'] is Timestamp
+          ? (m['createdAt'] as Timestamp).toDate()
+          : DateTime.now(),
       amount: (m['amount'] as num?)?.toDouble() ?? 0,
       categoryId: m['category'] as String?,
       paymentId: m['payment'] as String?,

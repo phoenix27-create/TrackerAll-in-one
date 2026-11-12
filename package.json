@@ -1,0 +1,12 @@
+{
+  "name": "lifetrack-push",
+  "private": true,
+  "description": "Netlify Functions that send Web Push notifications for LifeTrack (works on the free Firebase Spark plan).",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.4.0",
+    "web-push": "^3.6.7"
+  }
+}

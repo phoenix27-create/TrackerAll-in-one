@@ -15,6 +15,13 @@
   """
   publish = "build/web"
 
+# Push notifications (see netlify/lib/push.mjs for the required
+# environment variables). Netlify installs package.json deps before building.
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["firebase-admin", "web-push"]
+
 # Single-page app: any unknown path loads the app.
 [[redirects]]
   from = "/*"

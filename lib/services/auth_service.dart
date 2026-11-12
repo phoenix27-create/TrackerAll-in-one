@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../firebase_options.dart';
 import 'location_service.dart';
 import 'partner_service.dart';
+import 'push_service.dart';
 import 'reminder_service.dart';
 
 /// Authentication:
@@ -165,6 +166,7 @@ class AuthService {
 
   Future<void> signOut() async {
     await ReminderService.instance.cancelAll();
+    await PushService.instance.unregister();
     PartnerService.instance.stopInbox();
     await LocationService.instance.stop();
     if (!kIsWeb && _googleReady) {

@@ -8,6 +8,7 @@ import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
 import '../location/partner_map_screen.dart';
 import '../../services/partner_service.dart';
+import '../../services/push_service.dart';
 import '../../services/reminder_service.dart';
 import '../expense/expense_shell.dart';
 import '../partner/partner_card.dart';
@@ -52,6 +53,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ReminderService.instance.sync(widget.user.uid);
     PartnerService.instance.ensureCode(widget.user.uid);
     PartnerService.instance.listenInbox(widget.user.uid);
+    // Web: get notifications even when the app is closed.
+    PushService.instance.register(widget.user.uid);
     // Share live GPS while linked with a partner; stop when not.
     _profileSub = _profile.listen((p) {
       final pid = p['partnerId'] as String?;
@@ -86,6 +89,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // New day / data changed elsewhere: re-plan "no expense today" reminders.
     if (state == AppLifecycleState.resumed) {
       ReminderService.instance.sync(widget.user.uid);
+      // Keeps the subscription (and time zone for reminders) fresh.
+      PushService.instance.register(widget.user.uid);
     }
   }
 
