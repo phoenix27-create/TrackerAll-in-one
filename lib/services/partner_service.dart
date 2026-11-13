@@ -547,8 +547,8 @@ class PartnerActivity {
           : '🚨 $firstName spent more than their income',
     'alert' =>
       onYourTracker
-          ? '⚠️ Your savings are below the goal'
-          : "⚠️ $firstName's savings are below the goal",
+          ? '⚠️ Only ${mmk(remaining)} left in your budget'
+          : '⚠️ $firstName has only ${mmk(remaining)} left',
     'salary' =>
       onYourTracker
           ? '💵 $firstName added ${mmk(amount)} income to your tracker'
@@ -584,8 +584,12 @@ class PartnerActivity {
           return 'Spent ${mmk(spent)} of ${mmk(income)} income$forMonth '
               '(${mmk(-remaining)} over). Saving goal: ${mmk(keep)}.';
         }
-        return '$whose savings are ${mmk(remaining)}, below the goal '
-            '${mmk(keep)}$forMonth. Stop non-essential spending.';
+        if (income > 0) {
+          return 'Spent ${mmk(spent)} of ${mmk(income)} income$forMonth. '
+              'That is below the saving goal of ${mmk(keep)}.';
+        }
+        return '$whose money left is ${mmk(remaining)}, below the saving '
+            'goal of ${mmk(keep)}$forMonth.';
       case 'salary':
         final pay = PaymentMethod.byId(paymentId).label;
         return source.isNotEmpty ? '$source • $pay' : 'Received by $pay';
@@ -623,8 +627,8 @@ class PartnerActivity {
           : '$firstName spent more than their income',
     'alert' =>
       onYourTracker
-          ? 'Your savings fell below the goal'
-          : "$firstName's savings fell below the goal",
+          ? 'Only ${mmk(remaining)} left (below your saving goal)'
+          : '$firstName has only ${mmk(remaining)} left (below the goal)',
     'salary' =>
       onYourTracker
           ? '$firstName added ${mmk(amount)} income for you'

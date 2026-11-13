@@ -107,18 +107,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       builder: (_) => ExpenseShell(uid: widget.user.uid),
     ),
     TrackerInfo(
-      title: 'Fitness Tracker',
-      subtitle: 'Steps, workouts & weight',
-      icon: Icons.fitness_center_rounded,
-      colors: [AppColors.orange, Color(0xFFFF9466)],
-    ),
-    TrackerInfo(
       title: 'Partner Location',
       subtitle: 'Live GPS with your partner',
       icon: Icons.location_on_rounded,
       colors: const [Color(0xFFE91E63), Color(0xFFFF6090)],
       builder: (_) =>
           PartnerMapScreen(myUid: widget.user.uid, partnerId: _partnerId),
+    ),
+    TrackerInfo(
+      title: 'Fitness Tracker',
+      subtitle: 'Steps, workouts & weight',
+      icon: Icons.fitness_center_rounded,
+      colors: [AppColors.orange, Color(0xFFFF9466)],
     ),
     const TrackerInfo(
       title: 'Habit Tracker',

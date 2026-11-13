@@ -32,16 +32,20 @@ void main() {
     expect(over.title, contains('more than their income'));
     expect(over.body, contains('over'));
 
+    // The case from the screenshot: 210,000 spent of 220,000, goal 44,000.
     final below = a({
       'type': 'alert',
-      'remaining': 30000,
-      'keep': 50000,
-      'income': 300000,
-      'spent': 270000,
+      'remaining': 10000,
+      'keep': 44000,
+      'income': 220000,
+      'spent': 210000,
     });
     expect(below.overIncome, isFalse);
-    expect(below.title, contains('below the goal'));
-    expect(below.isUrgent, isTrue);
+    expect(below.title, contains('only'));
+    expect(below.title, contains('10,000'));
+    expect(below.body, contains('210,000'));
+    expect(below.body, contains('220,000'));
+    expect(below.body, contains('saving goal'));
   });
 
   test('expense message unchanged', () {

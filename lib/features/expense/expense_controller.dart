@@ -132,8 +132,11 @@ class ExpenseController extends ChangeNotifier {
 
     // Only the selected month is in memory.
     if (monthStart(e.date) != _month) return BudgetStatus.healthy;
+    // Start from the list as it was BEFORE saving: the live list may
+    // already contain the new expense (Firestore updates it instantly).
     final after = _projected(
-      expenses: [..._expenses.where((x) => x.id != e.id || e.id.isEmpty), e],
+      expenses: [...before.expenses.where((x) => isNew || x.id != e.id), e],
+      from: before,
     );
     await _checkBudget(me, before, after, alwaysAlert: isNew);
     return after.status;
@@ -168,7 +171,8 @@ class ExpenseController extends ChangeNotifier {
       me,
       before,
       _projected(
-        salaries: [..._salaries.where((x) => x.id != s.id || s.id.isEmpty), s],
+        salaries: [...before.salaries.where((x) => isNew || x.id != s.id), s],
+        from: before,
       ),
     );
   }
@@ -180,7 +184,10 @@ class ExpenseController extends ChangeNotifier {
     await _checkBudget(
       me,
       before,
-      _projected(salaries: _salaries.where((x) => x.id != id).toList()),
+      _projected(
+        salaries: before.salaries.where((x) => x.id != id).toList(),
+        from: before,
+      ),
     );
   }
 
@@ -200,7 +207,7 @@ class ExpenseController extends ChangeNotifier {
     final me = await _me();
     final before = summary;
     await save();
-    final after = _projected(settings: next);
+    final after = _projected(settings: next, from: before);
     final goal = after.keepAmount;
     final month = monthLabel(_month);
     unawaited(
@@ -226,15 +233,18 @@ class ExpenseController extends ChangeNotifier {
 
   String get _who => ownerName ?? 'Your partner';
 
+  /// The month after a change: [from] (the data before saving) with the
+  /// changed part replaced.
   MonthSummary _projected({
+    required MonthSummary from,
     List<Salary>? salaries,
     List<Expense>? expenses,
     MonthSettings? settings,
   }) => MonthSummary(
     month: _month,
-    salaries: salaries ?? _salaries,
-    expenses: expenses ?? _expenses,
-    settings: settings ?? _settings,
+    salaries: salaries ?? from.salaries,
+    expenses: expenses ?? from.expenses,
+    settings: settings ?? from.settings,
   );
 
   /// Alerts both people when spending is above income or the balance is
@@ -253,24 +263,24 @@ class ExpenseController extends ChangeNotifier {
 
     if (status == BudgetStatus.danger &&
         (alwaysAlert || !wasDanger || (overIncome && !wasOver))) {
-      final whose = partnerView ? "$_who's" : 'Your';
       final month = monthLabel(_month);
+      final spentOf =
+          'Spent ${mmk(after.totalExpense)} of ${mmk(after.totalSalary)} '
+          'income for $month';
       await NotificationService.instance.show(
         title: overIncome
             ? (partnerView
                   ? '🚨 $_who spent more than their income'
                   : '🚨 You spent more than your income')
             : (partnerView
-                  ? "⚠️ $_who's savings are below the goal"
-                  : '⚠️ Your savings are below the goal'),
+                  ? '⚠️ $_who has only ${mmk(after.remaining)} left'
+                  : '⚠️ Only ${mmk(after.remaining)} left to spend'),
         body: overIncome
-            ? 'Spent ${mmk(after.totalExpense)} of ${mmk(after.totalSalary)} '
-                  'income for $month (${mmk(-after.remaining)} over). '
+            ? '$spentOf (${mmk(-after.remaining)} over). '
                   'Saving goal: ${mmk(after.keepAmount)}.'
-            : '$whose savings are ${mmk(after.remaining)}, below the goal '
-                  '${mmk(after.keepAmount)} for $month. '
-                  'Stop non-essential spending.',
-        urgent: true,
+            : '$spentOf. That is below the saving goal of '
+                  '${mmk(after.keepAmount)}.',
+        urgent: overIncome,
       );
       unawaited(_toOther(me, (svc, other) => svc.notifyAlert(
             myUid: me.uid,
