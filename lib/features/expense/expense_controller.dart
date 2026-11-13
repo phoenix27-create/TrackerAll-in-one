@@ -91,10 +91,16 @@ class ExpenseController extends ChangeNotifier {
   }
 
   /// Saves an expense and returns the resulting status for the expense's month.
-  /// Sends a device notification when the keep amount is broken.
+  ///
+  /// Notifications (both people get one):
+  ///  * new expense -> "added" message for me, partner inbox for the other;
+  ///  * spending above income, or balance below the saving goal -> alert
+  ///    for both (every new expense while it stays like that);
+  ///  * 80% of the budget used -> heads-up for me.
   Future<BudgetStatus> saveExpense(Expense e) async {
     final isNew = e.id.isEmpty;
     final me = await _me();
+    final before = summary;
     await repo.saveExpense(
       e,
       extra: partnerView
@@ -104,63 +110,204 @@ class ExpenseController extends ChangeNotifier {
     // Logged something today -> stop today's "no expense" reminders.
     // (The owner's own device re-syncs when they open the app.)
     if (!partnerView) unawaited(ReminderService.instance.sync(repo.uid));
-    final status = await _checkAfterChange(
-      e.date,
-      editedId: e.id,
-      newAmount: e.amount,
-    );
-    if (isNew) unawaited(_tellOther(me, e, status));
-    return status;
-  }
 
-  String get _who => ownerName ?? 'Your partner';
-  double _lastRemaining = 0;
-
-  Future<BudgetStatus> _checkAfterChange(
-    DateTime date, {
-    required String editedId,
-    required double newAmount,
-  }) async {
-    // Only the selected month is in memory; compute the projected summary.
-    if (monthStart(date) != _month) return BudgetStatus.healthy;
-    final others = _expenses.where((x) => x.id != editedId || editedId.isEmpty);
-    final total = others.fold<double>(0, (s, x) => s + x.amount) + newAmount;
-    final s = summary;
-    final remaining = s.totalSalary - total;
-    _lastRemaining = remaining;
-    BudgetStatus status;
-    if (s.totalSalary <= 0) {
-      status = BudgetStatus.noSalary;
-    } else if (remaining < s.keepAmount) {
-      status = BudgetStatus.danger;
-    } else if (s.spendableBudget > 0 && total >= s.spendableBudget * 0.8) {
-      status = BudgetStatus.warning;
-    } else {
-      status = BudgetStatus.healthy;
+    if (isNew) {
+      final cat = ExpenseCategory.byId(e.categoryId).label;
+      unawaited(
+        _showMine(
+          title: partnerView
+              ? '📝 You added ${mmk(e.amount)} to $_who\'s expenses'
+              : '✅ Expense added: ${mmk(e.amount)}',
+          body: '$cat • ${PaymentMethod.byId(e.paymentId).label}',
+        ),
+      );
+      unawaited(_toOther(me, (svc, other) => svc.notifyExpense(
+            myUid: me.uid,
+            myName: me.name,
+            partnerUid: other,
+            e: e,
+            onYourTracker: partnerView,
+          )));
     }
 
-    if (status == BudgetStatus.danger) {
-      await NotificationService.instance.show(
+    // Only the selected month is in memory.
+    if (monthStart(e.date) != _month) return BudgetStatus.healthy;
+    final after = _projected(
+      expenses: [..._expenses.where((x) => x.id != e.id || e.id.isEmpty), e],
+    );
+    await _checkBudget(me, before, after, alwaysAlert: isNew);
+    return after.status;
+  }
+
+  // ---------------------------------------------------------- salary --
+
+  Future<void> saveSalary(Salary s) async {
+    final isNew = s.id.isEmpty;
+    final me = await _me();
+    final before = summary;
+    await repo.saveSalary(s);
+    if (isNew) {
+      unawaited(
+        _showMine(
+          title: partnerView
+              ? '💵 You added ${mmk(s.amount)} income to $_who\'s tracker'
+              : '💵 Income added: ${mmk(s.amount)}',
+          body: '${s.source} • ${s.payment.label}',
+        ),
+      );
+      unawaited(_toOther(me, (svc, other) => svc.notifySalary(
+            myUid: me.uid,
+            myName: me.name,
+            partnerUid: other,
+            s: s,
+            onYourTracker: partnerView,
+          )));
+    }
+    if (monthStart(s.date) != _month) return;
+    await _checkBudget(
+      me,
+      before,
+      _projected(
+        salaries: [..._salaries.where((x) => x.id != s.id || s.id.isEmpty), s],
+      ),
+    );
+  }
+
+  Future<void> deleteSalary(String id) async {
+    final me = await _me();
+    final before = summary;
+    await repo.deleteSalary(id);
+    await _checkBudget(
+      me,
+      before,
+      _projected(salaries: _salaries.where((x) => x.id != id).toList()),
+    );
+  }
+
+  // ------------------------------------------------------ saving goal --
+
+  Future<void> setCustomKeep(double? amount) => _setKeep(
+    MonthSettings(customKeep: amount, keepPercent: _settings.keepPercent),
+    () => repo.setKeep(_month, customKeep: amount),
+  );
+
+  Future<void> setKeepPercent(double percent) => _setKeep(
+    MonthSettings(keepPercent: percent),
+    () => repo.setKeep(_month, customKeep: null, keepPercent: percent),
+  );
+
+  Future<void> _setKeep(MonthSettings next, Future<void> Function() save) async {
+    final me = await _me();
+    final before = summary;
+    await save();
+    final after = _projected(settings: next);
+    final goal = after.keepAmount;
+    final month = monthLabel(_month);
+    unawaited(
+      _showMine(
         title: partnerView
-            ? "⚠️ Emergency: $_who's savings goal broken"
-            : '⚠️ Emergency: savings goal broken',
-        body:
-            '${partnerView ? "$_who's" : 'Your'} balance is ${mmk(remaining)}, below the '
-            'keep amount ${mmk(s.keepAmount)} for ${monthLabel(_month)}. '
-            'Stop non-essential spending.',
+            ? '🎯 You set $_who\'s saving goal to ${mmk(goal)}'
+            : '🎯 Saving goal set: ${mmk(goal)}',
+        body: 'For $month.',
+      ),
+    );
+    unawaited(_toOther(me, (svc, other) => svc.notifyKeep(
+          myUid: me.uid,
+          myName: me.name,
+          partnerUid: other,
+          keep: goal,
+          month: month,
+          onYourTracker: partnerView,
+        )));
+    await _checkBudget(me, before, after);
+  }
+
+  // ---------------------------------------------------------- alerts --
+
+  String get _who => ownerName ?? 'Your partner';
+
+  MonthSummary _projected({
+    List<Salary>? salaries,
+    List<Expense>? expenses,
+    MonthSettings? settings,
+  }) => MonthSummary(
+    month: _month,
+    salaries: salaries ?? _salaries,
+    expenses: expenses ?? _expenses,
+    settings: settings ?? _settings,
+  );
+
+  /// Alerts both people when spending is above income or the balance is
+  /// below the saving goal. [alwaysAlert] (new expenses): alert on every
+  /// expense while it stays like that; otherwise only when it just became so.
+  Future<void> _checkBudget(
+    _Me me,
+    MonthSummary before,
+    MonthSummary after, {
+    bool alwaysAlert = false,
+  }) async {
+    final status = after.status;
+    final overIncome = after.totalSalary > 0 && after.remaining < 0;
+    final wasOver = before.totalSalary > 0 && before.remaining < 0;
+    final wasDanger = before.status == BudgetStatus.danger;
+
+    if (status == BudgetStatus.danger &&
+        (alwaysAlert || !wasDanger || (overIncome && !wasOver))) {
+      final whose = partnerView ? "$_who's" : 'Your';
+      final month = monthLabel(_month);
+      await NotificationService.instance.show(
+        title: overIncome
+            ? (partnerView
+                  ? '🚨 $_who spent more than their income'
+                  : '🚨 You spent more than your income')
+            : (partnerView
+                  ? "⚠️ $_who's savings are below the goal"
+                  : '⚠️ Your savings are below the goal'),
+        body: overIncome
+            ? 'Spent ${mmk(after.totalExpense)} of ${mmk(after.totalSalary)} '
+                  'income for $month (${mmk(-after.remaining)} over). '
+                  'Saving goal: ${mmk(after.keepAmount)}.'
+            : '$whose savings are ${mmk(after.remaining)}, below the goal '
+                  '${mmk(after.keepAmount)} for $month. '
+                  'Stop non-essential spending.',
         urgent: true,
       );
-    } else if (status == BudgetStatus.warning) {
+      unawaited(_toOther(me, (svc, other) => svc.notifyAlert(
+            myUid: me.uid,
+            myName: me.name,
+            partnerUid: other,
+            onYourTracker: partnerView,
+            remaining: after.remaining,
+            keep: after.keepAmount,
+            income: after.totalSalary,
+            spent: after.totalExpense,
+            month: month,
+          )));
+    } else if (status == BudgetStatus.warning && alwaysAlert) {
       await NotificationService.instance.show(
         title: partnerView
             ? "Heads up: 80% of $_who's budget used"
             : 'Heads up: 80% of your budget used',
         body:
-            'Only ${mmk(remaining - s.keepAmount)} left to spend before touching '
-            'the keep amount.',
+            'Only ${mmk(after.remaining - after.keepAmount)} left to spend '
+            'before touching the saving goal.',
       );
     }
-    return status;
+  }
+
+  /// "You added …" confirmation on this device.
+  Future<void> _showMine({required String title, required String body}) =>
+      NotificationService.instance.show(title: title, body: body);
+
+  /// The other person: the owner when the partner edits their tracker, the
+  /// partner when the owner edits their own tracker.
+  Future<void> _toOther(
+    _Me me,
+    Future<void> Function(PartnerService svc, String other) send,
+  ) async {
+    final other = partnerView ? repo.uid : me.partnerId;
+    if (other == null || other == me.uid) return;
+    await send(PartnerService.instance, other);
   }
 
   /// The signed-in user (the owner, or the partner in [partnerView]).
@@ -185,46 +332,10 @@ class ExpenseController extends ChangeNotifier {
     return _Me(uid, name, partnerId);
   }
 
-  /// Tells the other person about a new expense (and the alert, if the keep
-  /// amount is now broken): the owner when the partner edits their tracker,
-  /// the partner when the owner adds to their own tracker.
-  Future<void> _tellOther(_Me me, Expense e, BudgetStatus status) async {
-    final other = partnerView ? repo.uid : me.partnerId;
-    if (other == null) return;
-    final svc = PartnerService.instance;
-    await svc.notifyExpense(
-      myUid: me.uid,
-      myName: me.name,
-      partnerUid: other,
-      e: e,
-      onYourTracker: partnerView,
-    );
-    if (status == BudgetStatus.danger) {
-      await svc.notifyAlert(
-        myUid: me.uid,
-        myName: me.name,
-        partnerUid: other,
-        onYourTracker: partnerView,
-        remaining: _lastRemaining,
-        keep: summary.keepAmount,
-        month: monthLabel(_month),
-      );
-    }
-  }
-
   Future<void> deleteExpense(String id) async {
     await repo.deleteExpense(id);
     if (!partnerView) unawaited(ReminderService.instance.sync(repo.uid));
   }
-
-  Future<void> saveSalary(Salary s) => repo.saveSalary(s);
-  Future<void> deleteSalary(String id) => repo.deleteSalary(id);
-
-  Future<void> setCustomKeep(double? amount) =>
-      repo.setKeep(_month, customKeep: amount);
-
-  Future<void> setKeepPercent(double percent) =>
-      repo.setKeep(_month, customKeep: null, keepPercent: percent);
 
   @override
   void dispose() {

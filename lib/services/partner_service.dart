@@ -271,7 +271,42 @@ class PartnerService {
     });
   }
 
-  /// The keep amount was broken – the emergency alert goes to both partners.
+  /// Income added (to the sender's own tracker, or to the receiver's when
+  /// [onYourTracker]).
+  Future<void> notifySalary({
+    required String myUid,
+    required String myName,
+    required String partnerUid,
+    required Salary s,
+    bool onYourTracker = false,
+  }) => _safeInbox(partnerUid, {
+    'type': 'salary',
+    'from': myUid,
+    'fromName': myName,
+    'onYourTracker': onYourTracker,
+    'amount': s.amount,
+    'source': s.source,
+    'payment': s.paymentId,
+  });
+
+  /// Saving goal (keep amount) changed.
+  Future<void> notifyKeep({
+    required String myUid,
+    required String myName,
+    required String partnerUid,
+    required double keep,
+    required String month,
+    bool onYourTracker = false,
+  }) => _safeInbox(partnerUid, {
+    'type': 'keep',
+    'from': myUid,
+    'fromName': myName,
+    'onYourTracker': onYourTracker,
+    'keep': keep,
+    'month': month,
+  });
+
+  /// Spending above income, or savings below the goal – goes to both.
   Future<void> notifyAlert({
     required String myUid,
     required String myName,
@@ -280,6 +315,8 @@ class PartnerService {
     required double remaining,
     required double keep,
     required String month,
+    double income = 0,
+    double spent = 0,
   }) => _safeInbox(partnerUid, {
     'type': 'alert',
     'from': myUid,
@@ -287,6 +324,8 @@ class PartnerService {
     'onYourTracker': onYourTracker,
     'remaining': remaining,
     'keep': keep,
+    'income': income,
+    'spent': spent,
     'month': month,
   });
 
@@ -435,7 +474,17 @@ class PartnerActivity {
     this.month = '',
     this.place,
     this.battery,
+    this.source = '',
+    this.income = 0,
+    this.spent = 0,
   });
+
+  final String source;
+  final double income;
+  final double spent;
+
+  /// Alert where spending is above income (not only below the goal).
+  bool get overIncome => type == 'alert' && income > 0 && remaining < 0;
 
   final String type;
   final String fromName;
@@ -473,6 +522,9 @@ class PartnerActivity {
       month: m['month'] as String? ?? '',
       place: m['place'] as String?,
       battery: (m['battery'] as num?)?.round(),
+      source: m['source'] as String? ?? '',
+      income: (m['income'] as num?)?.toDouble() ?? 0,
+      spent: (m['spent'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -489,10 +541,22 @@ class PartnerActivity {
 
   String get title => switch (type) {
     'connected' => '💞 $fromName connected with you',
+    'alert' when overIncome =>
+      onYourTracker
+          ? '🚨 Your spending is more than your income'
+          : '🚨 $firstName spent more than their income',
     'alert' =>
       onYourTracker
-          ? '⚠️ Emergency: your savings goal is broken'
-          : "⚠️ Emergency: $firstName's savings goal is broken",
+          ? '⚠️ Your savings are below the goal'
+          : "⚠️ $firstName's savings are below the goal",
+    'salary' =>
+      onYourTracker
+          ? '💵 $firstName added ${mmk(amount)} income to your tracker'
+          : '💵 $firstName added ${mmk(amount)} income',
+    'keep' =>
+      onYourTracker
+          ? '🎯 $firstName set your saving goal to ${mmk(keep)}'
+          : '🎯 $firstName set a saving goal of ${mmk(keep)}',
     'disconnect_request' => '💔 $firstName wants to disconnect',
     'disconnect_cancel' => '💞 $firstName cancelled the disconnect request',
     'disconnect_declined' => '💞 $firstName wants to stay connected',
@@ -515,8 +579,18 @@ class PartnerActivity {
         return 'You can now see and manage each other\'s expenses.';
       case 'alert':
         final whose = onYourTracker ? 'Your' : "$firstName's";
-        return '$whose balance is ${mmk(remaining)}, below the keep amount ${mmk(keep)}'
-            '${month.isEmpty ? '' : ' for $month'}. Stop non-essential spending.';
+        final forMonth = month.isEmpty ? '' : ' for $month';
+        if (overIncome) {
+          return 'Spent ${mmk(spent)} of ${mmk(income)} income$forMonth '
+              '(${mmk(-remaining)} over). Saving goal: ${mmk(keep)}.';
+        }
+        return '$whose savings are ${mmk(remaining)}, below the goal '
+            '${mmk(keep)}$forMonth. Stop non-essential spending.';
+      case 'salary':
+        final pay = PaymentMethod.byId(paymentId).label;
+        return source.isNotEmpty ? '$source • $pay' : 'Received by $pay';
+      case 'keep':
+        return month.isEmpty ? 'New saving goal.' : 'For $month.';
       case 'disconnect_request':
         return 'Open LifeTrack to confirm, or choose to stay connected.';
       case 'disconnect_cancel':
@@ -543,10 +617,22 @@ class PartnerActivity {
 
   String get shortText => switch (type) {
     'connected' => '$firstName connected with you',
+    'alert' when overIncome =>
+      onYourTracker
+          ? 'Your spending went over your income'
+          : '$firstName spent more than their income',
     'alert' =>
       onYourTracker
-          ? 'Your keep amount was broken'
-          : "$firstName's keep amount was broken",
+          ? 'Your savings fell below the goal'
+          : "$firstName's savings fell below the goal",
+    'salary' =>
+      onYourTracker
+          ? '$firstName added ${mmk(amount)} income for you'
+          : '$firstName added ${mmk(amount)} income',
+    'keep' =>
+      onYourTracker
+          ? '$firstName set your saving goal to ${mmk(keep)}'
+          : '$firstName set a saving goal of ${mmk(keep)}',
     'disconnect_request' => '$firstName asked to disconnect',
     'disconnect_cancel' => '$firstName cancelled the disconnect',
     'disconnect_declined' => '$firstName wants to stay connected',

@@ -60,3 +60,6 @@ ui-debug.log*
 key.properties
 .env
 
+
+# Local Netlify folder
+.netlify

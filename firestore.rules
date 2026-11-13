@@ -133,7 +133,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notified']);
         allow create: if isPartner(uid)
           && request.resource.data.from == request.auth.uid
-          && request.resource.data.type in ['expense', 'connected', 'alert',
+          && request.resource.data.type in ['expense', 'salary', 'keep', 'connected', 'alert',
                'disconnect_request', 'disconnect_cancel', 'disconnect_declined',
                // live-GPS alerts detected on the partner's phone
                'driving_start', 'driving_stop', 'left_place', 'arrived_place',
